@@ -30,6 +30,9 @@ class PlannerRequestHandler(BaseHTTPRequestHandler):
         if path == "/example-seed.json":
             example_path = Path(__file__).resolve().parents[1] / "examples" / "scenario_seed.json"
             return self.respond_json(json.loads(example_path.read_text()))
+        if path == "/terrain/land.geojson":
+            terrain_path = Path(__file__).resolve().parent / "data" / "ne_110m_land.geojson"
+            return self.respond_json(json.loads(terrain_path.read_text()))
         if path == "/scenarios":
             return self.handle_list_scenarios()
 
@@ -38,6 +41,8 @@ class PlannerRequestHandler(BaseHTTPRequestHandler):
             return self.handle_get_scenario(parts[1])
         if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "view":
             return self.handle_get_view(parts[1], query)
+        if len(parts) == 4 and parts[0] == "sessions" and parts[2] == "admin" and parts[3] == "view":
+            return self.handle_get_admin_view(parts[1], query)
         if len(parts) == 4 and parts[0] == "sessions" and parts[2] == "export" and parts[3] == "scenario.ini":
             return self.handle_export(parts[1], query)
 
@@ -55,9 +60,29 @@ class PlannerRequestHandler(BaseHTTPRequestHandler):
             return self.handle_create_session()
         if len(parts) == 4 and parts[0] == "sessions" and parts[2] == "turns":
             return self.handle_submit_turn(parts[1], parts[3], query)
+        if len(parts) == 4 and parts[0] == "sessions" and parts[2] == "builds":
+            return self.handle_build_fleet(parts[1], parts[3], query)
+        if len(parts) == 5 and parts[0] == "sessions" and parts[2] == "admin" and parts[3] == "fleets":
+            return self.handle_admin_update_fleet(parts[1], parts[4], query)
         if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "resolve":
             return self.handle_resolve(parts[1], query)
 
+        self.respond_error(HTTPStatus.NOT_FOUND, "Not found.")
+
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        parts = [part for part in path.split("/") if part]
+        if len(parts) == 2 and parts[0] == "scenarios":
+            return self.handle_delete_scenario(parts[1])
+        self.respond_error(HTTPStatus.NOT_FOUND, "Not found.")
+
+    def do_PUT(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        parts = [part for part in path.split("/") if part]
+        if len(parts) == 2 and parts[0] == "scenarios":
+            return self.handle_update_scenario(parts[1])
         self.respond_error(HTTPStatus.NOT_FOUND, "Not found.")
 
     def handle_create_session(self):
@@ -82,6 +107,7 @@ class PlannerRequestHandler(BaseHTTPRequestHandler):
             "admin_token": state["tokens"]["admin"],
             "blue_url": f"{base_url}/?session={state['session_id']}&token={state['tokens'][core.BLUE]}",
             "red_url": f"{base_url}/?session={state['session_id']}&token={state['tokens'][core.RED]}",
+            "admin_url": f"{base_url}/?session={state['session_id']}&admin_token={state['tokens']['admin']}",
             "export_url": f"{base_url}/sessions/{state['session_id']}/export/scenario.ini?admin_token={state['tokens']['admin']}",
         }
         self.respond_json(response, status=HTTPStatus.CREATED)
@@ -104,22 +130,6 @@ class PlannerRequestHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
         self.respond_json(scenario, status=HTTPStatus.CREATED)
-
-    def do_DELETE(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
-        parts = [part for part in path.split("/") if part]
-        if len(parts) == 2 and parts[0] == "scenarios":
-            return self.handle_delete_scenario(parts[1])
-        self.respond_error(HTTPStatus.NOT_FOUND, "Not found.")
-
-    def do_PUT(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
-        parts = [part for part in path.split("/") if part]
-        if len(parts) == 2 and parts[0] == "scenarios":
-            return self.handle_update_scenario(parts[1])
-        self.respond_error(HTTPStatus.NOT_FOUND, "Not found.")
 
     def handle_delete_scenario(self, scenario_id: str):
         deleted = self.server.store.delete_scenario(scenario_id)
@@ -151,6 +161,17 @@ class PlannerRequestHandler(BaseHTTPRequestHandler):
 
         self.respond_json(core.build_player_view(state, role))
 
+    def handle_get_admin_view(self, session_id: str, query: dict):
+        state = self.server.store.get_state(session_id)
+        if state is None:
+            return self.respond_error(HTTPStatus.NOT_FOUND, "Session not found.")
+
+        admin_token = first_query_value(query, "admin_token")
+        if self.server.store.session_role_for_token(state, admin_token) != "admin":
+            return self.respond_error(HTTPStatus.FORBIDDEN, "Admin token required.")
+
+        self.respond_json(core.build_admin_view(state))
+
     def handle_submit_turn(self, session_id: str, side: str, query: dict):
         state = self.server.store.get_state(session_id)
         if state is None:
@@ -171,6 +192,58 @@ class PlannerRequestHandler(BaseHTTPRequestHandler):
 
         self.server.store.save_state(state)
         self.respond_json(result)
+
+    def handle_build_fleet(self, session_id: str, side: str, query: dict):
+        state = self.server.store.get_state(session_id)
+        if state is None:
+            return self.respond_error(HTTPStatus.NOT_FOUND, "Session not found.")
+
+        token = first_query_value(query, "token")
+        admin_token = first_query_value(query, "admin_token")
+        role = self.server.store.session_role_for_token(state, token)
+        if admin_token:
+            if self.server.store.session_role_for_token(state, admin_token) != "admin":
+                return self.respond_error(HTTPStatus.FORBIDDEN, "Admin token required.")
+        elif role != side:
+            return self.respond_error(HTTPStatus.FORBIDDEN, "Token does not match the requested side.")
+
+        payload = self.read_json_body()
+        if payload is None:
+            return
+        try:
+            fleet = core.build_fleet_for_side(state, side, str(payload.get("template_id", "")))
+        except (ValueError, TypeError) as exc:
+            return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
+
+        self.server.store.save_state(state)
+        self.respond_json(
+            {
+                "fleet": fleet,
+                "economy": core.player_side_state_snapshot(state, side),
+                "updated_at": state["updated_at"],
+            }
+        )
+
+    def handle_admin_update_fleet(self, session_id: str, fleet_id: str, query: dict):
+        state = self.server.store.get_state(session_id)
+        if state is None:
+            return self.respond_error(HTTPStatus.NOT_FOUND, "Session not found.")
+
+        admin_token = first_query_value(query, "admin_token")
+        if self.server.store.session_role_for_token(state, admin_token) != "admin":
+            return self.respond_error(HTTPStatus.FORBIDDEN, "Admin token required.")
+
+        payload = self.read_json_body()
+        if payload is None:
+            return
+
+        try:
+            fleet = core.admin_update_fleet(state, fleet_id, payload)
+        except (ValueError, TypeError) as exc:
+            return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
+
+        self.server.store.save_state(state)
+        self.respond_json({"fleet": fleet, "updated_at": state["updated_at"]})
 
     def handle_resolve(self, session_id: str, query: dict):
         state = self.server.store.get_state(session_id)
