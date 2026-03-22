@@ -21,6 +21,11 @@ DEFAULT_ENVIRONMENT = {
     "load_background_data": False,
 }
 
+DEFAULT_SIDE_METADATA = {
+    BLUE: {"faction": "NATO", "starting_funds": 0},
+    RED: {"faction": "Warsaw Pact", "starting_funds": 0},
+}
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -58,6 +63,7 @@ def create_session_state(seed: dict) -> dict:
         "updated_at": now,
         "map_center": map_center,
         "environment": normalize_environment(seed.get("environment", {})),
+        "side_metadata": normalize_side_metadata(seed.get("side_metadata")),
         "tokens": {
             BLUE: secrets.token_urlsafe(18),
             RED: secrets.token_urlsafe(18),
@@ -73,6 +79,19 @@ def create_session_state(seed: dict) -> dict:
     get_or_create_turn_record(state, state["current_turn"])
     initialize_contacts(state)
     return state
+
+
+def normalize_side_metadata(side_metadata: dict | None) -> dict:
+    normalized = copy.deepcopy(DEFAULT_SIDE_METADATA)
+    source = side_metadata or {}
+    for side in SIDES:
+        entry = source.get(side, {})
+        normalized[side]["faction"] = str(entry.get("faction") or normalized[side]["faction"])
+        try:
+            normalized[side]["starting_funds"] = int(entry.get("starting_funds", normalized[side]["starting_funds"]))
+        except (TypeError, ValueError):
+            normalized[side]["starting_funds"] = normalized[side]["starting_funds"]
+    return normalized
 
 
 def normalize_environment(environment: dict) -> dict:
@@ -379,6 +398,7 @@ def build_player_view(state: dict, side: str) -> dict:
         "turn_duration_minutes": state["turn_duration_minutes"],
         "map_center": state["map_center"],
         "environment": state["environment"],
+        "side_metadata": state["side_metadata"],
         "status": turn["status"],
         "own_submitted": own_submission is not None,
         "opponent_ready": other_side(side) in turn["submissions"],
@@ -398,6 +418,7 @@ def build_admin_view(state: dict) -> dict:
         "turn_duration_minutes": state["turn_duration_minutes"],
         "map_center": state["map_center"],
         "environment": state["environment"],
+        "side_metadata": state["side_metadata"],
         "fleets": [fleet_view_snapshot(fleet) for fleet in state["fleets"]],
         "turns": state["turns"],
         "contacts": state["contacts"],

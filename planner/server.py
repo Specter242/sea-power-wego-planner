@@ -30,8 +30,12 @@ class PlannerRequestHandler(BaseHTTPRequestHandler):
         if path == "/example-seed.json":
             example_path = Path(__file__).resolve().parents[1] / "examples" / "scenario_seed.json"
             return self.respond_json(json.loads(example_path.read_text()))
+        if path == "/scenarios":
+            return self.handle_list_scenarios()
 
         parts = [part for part in path.split("/") if part]
+        if len(parts) == 2 and parts[0] == "scenarios":
+            return self.handle_get_scenario(parts[1])
         if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "view":
             return self.handle_get_view(parts[1], query)
         if len(parts) == 4 and parts[0] == "sessions" and parts[2] == "export" and parts[3] == "scenario.ini":
@@ -45,6 +49,8 @@ class PlannerRequestHandler(BaseHTTPRequestHandler):
         query = parse_qs(parsed.query)
         parts = [part for part in path.split("/") if part]
 
+        if path == "/scenarios":
+            return self.handle_create_scenario()
         if path == "/sessions":
             return self.handle_create_session()
         if len(parts) == 4 and parts[0] == "sessions" and parts[2] == "turns":
@@ -58,6 +64,11 @@ class PlannerRequestHandler(BaseHTTPRequestHandler):
         payload = self.read_json_body()
         if payload is None:
             return
+        if payload.get("scenario_id"):
+            scenario = self.server.store.get_scenario(str(payload["scenario_id"]))
+            if scenario is None:
+                return self.respond_error(HTTPStatus.NOT_FOUND, "Scenario not found.")
+            payload = scenario["seed"]
         try:
             state = self.server.store.create_session(payload)
         except ValueError as exc:
@@ -74,6 +85,59 @@ class PlannerRequestHandler(BaseHTTPRequestHandler):
             "export_url": f"{base_url}/sessions/{state['session_id']}/export/scenario.ini?admin_token={state['tokens']['admin']}",
         }
         self.respond_json(response, status=HTTPStatus.CREATED)
+
+    def handle_list_scenarios(self):
+        self.respond_json({"scenarios": self.server.store.list_scenarios()})
+
+    def handle_get_scenario(self, scenario_id: str):
+        scenario = self.server.store.get_scenario(scenario_id)
+        if scenario is None:
+            return self.respond_error(HTTPStatus.NOT_FOUND, "Scenario not found.")
+        self.respond_json(scenario)
+
+    def handle_create_scenario(self):
+        payload = self.read_json_body()
+        if payload is None:
+            return
+        try:
+            scenario = self.server.store.create_scenario(payload)
+        except ValueError as exc:
+            return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
+        self.respond_json(scenario, status=HTTPStatus.CREATED)
+
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        parts = [part for part in path.split("/") if part]
+        if len(parts) == 2 and parts[0] == "scenarios":
+            return self.handle_delete_scenario(parts[1])
+        self.respond_error(HTTPStatus.NOT_FOUND, "Not found.")
+
+    def do_PUT(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        parts = [part for part in path.split("/") if part]
+        if len(parts) == 2 and parts[0] == "scenarios":
+            return self.handle_update_scenario(parts[1])
+        self.respond_error(HTTPStatus.NOT_FOUND, "Not found.")
+
+    def handle_delete_scenario(self, scenario_id: str):
+        deleted = self.server.store.delete_scenario(scenario_id)
+        if not deleted:
+            return self.respond_error(HTTPStatus.NOT_FOUND, "Scenario not found.")
+        self.respond_json({"deleted": True})
+
+    def handle_update_scenario(self, scenario_id: str):
+        payload = self.read_json_body()
+        if payload is None:
+            return
+        try:
+            scenario = self.server.store.update_scenario(scenario_id, payload)
+        except ValueError as exc:
+            return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
+        if scenario is None:
+            return self.respond_error(HTTPStatus.NOT_FOUND, "Scenario not found.")
+        self.respond_json(scenario)
 
     def handle_get_view(self, session_id: str, query: dict):
         state = self.server.store.get_state(session_id)
