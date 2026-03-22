@@ -14,6 +14,111 @@
     "wind_direction": "E",
     "load_background_data": false
   },
+  "sides": {
+    "Blue": {
+      "resources": 80,
+      "income_per_turn": 10,
+      "spawn_point": {
+        "lat": 25.05,
+        "lon": 54.85
+      },
+      "build_catalog": [
+        {
+          "id": "blue_sag",
+          "name": "Blue Surface Action Group",
+          "cost": 24,
+          "unit_type": "Surface",
+          "sea_power_type": "usn_ddg_adams_late",
+          "variant_reference": "Variant3",
+          "speed_kts": 24,
+          "detection_radius_nm": 115,
+          "composition": [
+            {
+              "name": "USS Gridley",
+              "sea_power_type": "usn_ddg_adams_late",
+              "variant_reference": "Variant3"
+            },
+            {
+              "name": "USS Spruance",
+              "sea_power_type": "usn_dd_spruance",
+              "variant_reference": "Variant6"
+            }
+          ]
+        },
+        {
+          "id": "blue_patrol",
+          "name": "Blue Patrol Frigate",
+          "cost": 12,
+          "unit_type": "Surface",
+          "sea_power_type": "usn_ffg_oliver_hazard_perry",
+          "variant_reference": "Variant1",
+          "speed_kts": 22,
+          "detection_radius_nm": 95,
+          "composition": [
+            {
+              "name": "USS Nicholas",
+              "sea_power_type": "usn_ffg_oliver_hazard_perry",
+              "variant_reference": "Variant1"
+            }
+          ]
+        }
+      ]
+    },
+    "Red": {
+      "resources": 70,
+      "income_per_turn": 8,
+      "spawn_point": {
+        "lat": 25.55,
+        "lon": 58.05
+      },
+      "build_catalog": [
+        {
+          "id": "red_fast_attack",
+          "name": "Fast Attack Group",
+          "cost": 16,
+          "unit_type": "Surface",
+          "sea_power_type": "ir_ptg_combattante_II",
+          "variant_reference": "Variant1",
+          "speed_kts": 28,
+          "detection_radius_nm": 90,
+          "composition": [
+            {
+              "name": "IRIS Peykan",
+              "sea_power_type": "ir_ptg_combattante_II",
+              "variant_reference": "Variant1"
+            },
+            {
+              "name": "IRIS Joshan",
+              "sea_power_type": "ir_ptg_combattante_II",
+              "variant_reference": "Variant1"
+            }
+          ]
+        },
+        {
+          "id": "red_patrol",
+          "name": "Kaivan Patrol Pair",
+          "cost": 10,
+          "unit_type": "Surface",
+          "sea_power_type": "ir_pt_kaivan",
+          "variant_reference": "Variant4",
+          "speed_kts": 24,
+          "detection_radius_nm": 75,
+          "composition": [
+            {
+              "name": "Kaivan-1",
+              "sea_power_type": "ir_pt_kaivan",
+              "variant_reference": "Variant4"
+            },
+            {
+              "name": "Kaivan-2",
+              "sea_power_type": "ir_pt_kaivan",
+              "variant_reference": "Variant4"
+            }
+          ]
+        }
+      ]
+    }
+  },
   "fleets": [
     {
       "id": "blue_tf_1",
@@ -31,7 +136,20 @@
       "heading_deg": 0,
       "speed_kts": 18,
       "detection_radius_nm": 120,
-      "status": "Active"
+      "status": "Active",
+      "resource_cost": 24,
+      "composition": [
+        {
+          "name": "USS Spruance",
+          "sea_power_type": "usn_dd_spruance",
+          "variant_reference": "Variant6"
+        },
+        {
+          "name": "USS O'Brien",
+          "sea_power_type": "usn_ffg_oliver_hazard_perry",
+          "variant_reference": "Variant1"
+        }
+      ]
     },
     {
       "id": "blue_tf_2",
@@ -49,7 +167,15 @@
       "heading_deg": 40,
       "speed_kts": 22,
       "detection_radius_nm": 110,
-      "status": "Active"
+      "status": "Active",
+      "resource_cost": 18,
+      "composition": [
+        {
+          "name": "USS Goldsborough",
+          "sea_power_type": "usn_ddg_adams_late",
+          "variant_reference": "Variant3"
+        }
+      ]
     },
     {
       "id": "red_tf_1",
@@ -67,7 +193,20 @@
       "heading_deg": 240,
       "speed_kts": 28,
       "detection_radius_nm": 90,
-      "status": "Active"
+      "status": "Active",
+      "resource_cost": 16,
+      "composition": [
+        {
+          "name": "IRIS Peykan",
+          "sea_power_type": "ir_ptg_combattante_II",
+          "variant_reference": "Variant1"
+        },
+        {
+          "name": "IRIS Joshan",
+          "sea_power_type": "ir_ptg_combattante_II",
+          "variant_reference": "Variant1"
+        }
+      ]
     },
     {
       "id": "red_tf_2",
@@ -85,7 +224,20 @@
       "heading_deg": 210,
       "speed_kts": 24,
       "detection_radius_nm": 75,
-      "status": "Active"
+      "status": "Active",
+      "resource_cost": 10,
+      "composition": [
+        {
+          "name": "Kaivan-1",
+          "sea_power_type": "ir_pt_kaivan",
+          "variant_reference": "Variant4"
+        },
+        {
+          "name": "Kaivan-2",
+          "sea_power_type": "ir_pt_kaivan",
+          "variant_reference": "Variant4"
+        }
+      ]
     }
   ]
 }

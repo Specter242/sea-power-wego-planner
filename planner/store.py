@@ -60,7 +60,7 @@ class SQLiteSessionStore:
             ).fetchone()
         if row is None:
             return None
-        return json.loads(row["state_json"])
+        return core.upgrade_state(json.loads(row["state_json"]))
 
     def session_role_for_token(self, state: dict, token: str) -> str | None:
         if not token:
