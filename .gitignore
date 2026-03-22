@@ -2,3 +2,5 @@ __pycache__/
 *.py[cod]
 *.sqlite3
 data/
+!planner/data/
+!planner/data/*.geojson

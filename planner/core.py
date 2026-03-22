@@ -25,6 +25,11 @@ DEFAULT_ENVIRONMENT = {
     "load_background_data": False,
 }
 
+DEFAULT_SIDE_METADATA = {
+    BLUE: {"faction": "NATO", "starting_funds": 0},
+    RED: {"faction": "Warsaw Pact", "starting_funds": 0},
+}
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -64,6 +69,7 @@ def create_session_state(seed: dict) -> dict:
         "fleet_counter": len(fleets),
         "map_center": map_center,
         "environment": normalize_environment(seed.get("environment", {})),
+        "side_metadata": normalize_side_metadata(seed.get("side_metadata")),
         "tokens": {
             BLUE: secrets.token_urlsafe(18),
             RED: secrets.token_urlsafe(18),
@@ -112,6 +118,7 @@ def upgrade_state(state: dict) -> dict:
     state["fleet_counter"] = int(state.get("fleet_counter", len(fleets)))
     state["environment"] = normalize_environment(state.get("environment", {}))
     state["map_center"] = normalize_map_center(state.get("map_center"), fleets)
+    state["side_metadata"] = normalize_side_metadata(state.get("side_metadata"))
     state["side_state"] = normalize_side_state(state.get("side_state", {}), fleets)
     state.setdefault("contacts", {BLUE: {}, RED: {}})
     state["contacts"].setdefault(BLUE, {})
@@ -119,6 +126,19 @@ def upgrade_state(state: dict) -> dict:
     state.setdefault("turns", {})
     get_or_create_turn_record(state, int(state.get("current_turn", 1)))
     return state
+
+
+def normalize_side_metadata(side_metadata: dict | None) -> dict:
+    normalized = copy.deepcopy(DEFAULT_SIDE_METADATA)
+    source = side_metadata or {}
+    for side in SIDES:
+        entry = source.get(side, {}) if isinstance(source, dict) else {}
+        normalized[side]["faction"] = str(entry.get("faction") or normalized[side]["faction"])
+        try:
+            normalized[side]["starting_funds"] = int(entry.get("starting_funds", normalized[side]["starting_funds"]))
+        except (TypeError, ValueError):
+            normalized[side]["starting_funds"] = normalized[side]["starting_funds"]
+    return normalized
 
 
 def normalize_environment(environment: dict) -> dict:
@@ -757,6 +777,7 @@ def build_player_view(state: dict, side: str) -> dict:
         "turn_duration_minutes": state["turn_duration_minutes"],
         "map_center": state["map_center"],
         "environment": state["environment"],
+        "side_metadata": state["side_metadata"],
         "status": turn["status"],
         "own_submitted": own_submission is not None,
         "opponent_ready": other_side(side) in turn["submissions"],
@@ -780,6 +801,7 @@ def build_admin_view(state: dict) -> dict:
         "turn_duration_minutes": state["turn_duration_minutes"],
         "map_center": state["map_center"],
         "environment": state["environment"],
+        "side_metadata": state["side_metadata"],
         "fleets": [admin_fleet_snapshot(fleet) for fleet in state["fleets"]],
         "turns": state["turns"],
         "current_turn_record": turn,

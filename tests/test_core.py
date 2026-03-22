@@ -10,6 +10,10 @@ def example_seed():
         "scenario_name": "Test Duel",
         "turn_duration_minutes": 60,
         "map_center": {"lat": 0.0, "lon": 0.0},
+        "side_metadata": {
+            "Blue": {"faction": "NATO", "starting_funds": 1200},
+            "Red": {"faction": "Iran", "starting_funds": 900},
+        },
         "sides": {
             "Blue": {
                 "resources": 50,
@@ -76,6 +80,15 @@ def example_seed():
 
 
 class CoreTests(unittest.TestCase):
+    def test_side_metadata_is_preserved_in_state_and_player_view(self):
+        state = core.create_session_state(example_seed())
+        self.assertEqual(state["side_metadata"]["Blue"]["faction"], "NATO")
+        self.assertEqual(state["side_metadata"]["Red"]["starting_funds"], 900)
+
+        blue_view = core.build_player_view(state, "Blue")
+        self.assertEqual(blue_view["side_metadata"]["Blue"]["starting_funds"], 1200)
+        self.assertEqual(blue_view["side_metadata"]["Red"]["faction"], "Iran")
+
     def test_multileg_movement_truncates_mid_path(self):
         state = core.create_session_state(example_seed())
         result = core.submit_turn(
