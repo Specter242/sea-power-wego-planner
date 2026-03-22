@@ -116,31 +116,17 @@ INDEX_HTML = """<!doctype html>
     }
     .order-item:first-child { border-top: none; }
     .small { font-size: 0.82rem; color: var(--muted); }
-    .fleet-token {
-      width: 18px;
-      height: 18px;
-      border-radius: 50%;
-      border: 2px solid rgba(255, 255, 255, 0.9);
-      box-shadow: 0 2px 10px rgba(27, 43, 52, 0.28);
+    .mil-symbol {
+      width: 44px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      filter: drop-shadow(0 2px 10px rgba(27, 43, 52, 0.25));
+      transform-origin: center;
     }
-    .fleet-token.selected {
-      transform: scale(1.25);
-      border-color: var(--accent);
-    }
-    .fleet-token.blue { background: var(--blue); }
-    .fleet-token.red { background: var(--red); }
-    .fleet-token.neutral { background: var(--neutral); }
-    .contact-token {
-      width: 14px;
-      height: 14px;
-      border-radius: 50%;
-      border: 2px solid rgba(255, 255, 255, 0.85);
-      box-shadow: 0 2px 8px rgba(27, 43, 52, 0.22);
-    }
-    .contact-token.last-known {
-      background: #d9ba6a;
-      border-style: dashed;
-      border-color: #8b6b2f;
+    .mil-symbol.selected {
+      transform: scale(1.08);
     }
     .scenario-summary {
       padding: 10px;
@@ -395,6 +381,8 @@ INDEX_HTML = """<!doctype html>
     let contactMarkers = new Map();
     let orderPolylines = new Map();
     let pollHandle = null;
+    let landPolygons = [];
+    let terrainPromise = null;
 
     function $(id) { return document.getElementById(id); }
 
@@ -406,12 +394,255 @@ INDEX_HTML = """<!doctype html>
         maxZoom: 18
       }).addTo(map);
       map.on("click", onMapClick);
+      loadTerrain().then(() => {
+        if (currentView) {
+          updatePanels(currentView);
+          renderView(currentView);
+        }
+      });
     }
 
     function colorForSide(value) {
       if (value === "Blue") return "#2b6bc4";
       if (value === "Red") return "#c43434";
       return "#6f7780";
+    }
+
+    function affiliationColor(affiliation) {
+      if (affiliation === "friendly") return "#2b6bc4";
+      if (affiliation === "hostile") return "#c43434";
+      if (affiliation === "neutral") return "#3b7f4c";
+      return "#b08b2d";
+    }
+
+    function symbolCategory(unitType) {
+      const normalized = String(unitType || "").trim().toLowerCase();
+      if (normalized.includes("subsurface") || normalized.includes("submarine")) return "subsurface";
+      if (normalized.includes("air")) return "air";
+      if (normalized.includes("land") || normalized.includes("ground") || normalized.includes("coastal") || normalized.includes("site")) return "land";
+      if (normalized.includes("support") || normalized.includes("logistics")) return "support";
+      return "surface";
+    }
+
+    function affiliationForFleet(view, fleet) {
+      if (fleet.side === "Neutral") return "neutral";
+      return fleet.side === view.side ? "friendly" : "hostile";
+    }
+
+    function symbolFrameSvg(affiliation, dashArray) {
+      const stroke = affiliationColor(affiliation);
+      const common = `fill="rgba(255,255,255,0.92)" stroke="${stroke}" stroke-width="3" ${dashArray ? `stroke-dasharray="${dashArray}"` : ""}`;
+      if (affiliation === "hostile") {
+        return `<polygon points="22,5 39,22 22,39 5,22" ${common} />`;
+      }
+      if (affiliation === "neutral") {
+        return `<rect x="7" y="7" width="30" height="30" ${common} />`;
+      }
+      if (affiliation === "unknown") {
+        return `<path d="M22 6 C29 6 35 12 35 19 C35 22 33 24 31 26 C33 28 35 30 35 34 C35 41 29 38 22 38 C15 38 9 41 9 34 C9 30 11 28 13 26 C11 24 9 22 9 19 C9 12 15 6 22 6 Z" ${common} />`;
+      }
+      return `<rect x="6" y="10" width="32" height="24" rx="2" ry="2" ${common} />`;
+    }
+
+    function symbolInteriorSvg(category, color) {
+      if (category === "subsurface") {
+        return `
+          <path d="M12 22 C16 18, 20 26, 24 22 S32 18, 36 22" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round" />
+          <path d="M14 29 L30 29" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round" />
+        `;
+      }
+      if (category === "air") {
+        return `
+          <path d="M12 28 L22 16 L32 28" fill="none" stroke="${color}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M22 17 L22 31" fill="none" stroke="${color}" stroke-width="2.2" stroke-linecap="round" />
+        `;
+      }
+      if (category === "land") {
+        return `
+          <path d="M14 14 L30 30 M30 14 L14 30" fill="none" stroke="${color}" stroke-width="2.6" stroke-linecap="round" />
+        `;
+      }
+      if (category === "support") {
+        return `
+          <path d="M22 13 L22 31 M13 22 L31 22" fill="none" stroke="${color}" stroke-width="2.6" stroke-linecap="round" />
+        `;
+      }
+      return `
+        <path d="M12 24 C16 20, 20 28, 24 24 S32 20, 36 24" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round" />
+      `;
+    }
+
+    function headingVector(headingDeg, length) {
+      const radians = ((Number(headingDeg || 0) - 90) * Math.PI) / 180;
+      return {
+        x: Math.cos(radians) * length,
+        y: Math.sin(radians) * length
+      };
+    }
+
+    function headingIndicatorSvg(headingDeg, color, moving) {
+      const outer = headingVector(headingDeg, 16);
+      const left = headingVector(Number(headingDeg || 0) + 150, 5);
+      const right = headingVector(Number(headingDeg || 0) - 150, 5);
+      const tipX = 22 + outer.x;
+      const tipY = 22 + outer.y;
+      const wingLeftX = tipX + left.x;
+      const wingLeftY = tipY + left.y;
+      const wingRightX = tipX + right.x;
+      const wingRightY = tipY + right.y;
+      const dash = moving ? "" : 'stroke-dasharray="2 2"';
+      return `
+        <path d="M22 22 L${tipX.toFixed(2)} ${tipY.toFixed(2)}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linecap="round" ${dash} />
+        <path d="M${wingLeftX.toFixed(2)} ${wingLeftY.toFixed(2)} L${tipX.toFixed(2)} ${tipY.toFixed(2)} L${wingRightX.toFixed(2)} ${wingRightY.toFixed(2)}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" ${dash} />
+      `;
+    }
+
+    function topModifierSvg(label, color) {
+      if (!label) return "";
+      return `
+        <text x="22" y="7.5" text-anchor="middle" font-size="8.5" font-weight="700" fill="${color}" style="font-family: Georgia, serif;">
+          ${label}
+        </text>
+      `;
+    }
+
+    function natoSymbolHtml(unitType, affiliation, options = {}) {
+      const color = affiliationColor(affiliation);
+      const category = symbolCategory(unitType);
+      const selected = options.selected ? " selected" : "";
+      const dashArray = options.lastKnown ? "4 3" : "";
+      const opacity = options.lastKnown ? 0.65 : 1.0;
+      const topModifier = options.topModifier || "";
+      const headingSvg = options.showHeading ? headingIndicatorSvg(options.headingDeg, color, options.moving) : "";
+      const svg = `
+        <svg width="44" height="44" viewBox="0 0 44 44" xmlns="http://www.w3.org/2000/svg" style="opacity:${opacity}">
+          ${options.selected ? '<circle cx="22" cy="22" r="20" fill="rgba(196,139,43,0.16)" stroke="#c48b2b" stroke-width="2" />' : ""}
+          ${topModifierSvg(topModifier, color)}
+          ${symbolFrameSvg(affiliation, dashArray)}
+          ${symbolInteriorSvg(category, color)}
+          ${headingSvg}
+        </svg>
+      `;
+      return `<div class="mil-symbol${selected}">${svg}</div>`;
+    }
+
+    function loadTerrain() {
+      if (terrainPromise) return terrainPromise;
+      terrainPromise = fetch("/terrain/land.geojson")
+        .then((response) => response.json())
+        .then((payload) => {
+          landPolygons = flattenLandGeometry(payload);
+          return landPolygons;
+        })
+        .catch((error) => {
+          console.error("terrain load failed", error);
+          landPolygons = [];
+          return landPolygons;
+        });
+      return terrainPromise;
+    }
+
+    function flattenLandGeometry(geojson) {
+      const polygons = [];
+      for (const feature of (geojson.features || [])) {
+        const geometry = feature.geometry || {};
+        if (geometry.type === "Polygon") {
+          polygons.push(buildPolygonRecord(geometry.coordinates || []));
+        } else if (geometry.type === "MultiPolygon") {
+          for (const polygon of (geometry.coordinates || [])) {
+            polygons.push(buildPolygonRecord(polygon));
+          }
+        }
+      }
+      return polygons;
+    }
+
+    function buildPolygonRecord(rings) {
+      const allPoints = rings.flat();
+      const lons = allPoints.map((point) => point[0]);
+      const lats = allPoints.map((point) => point[1]);
+      return {
+        rings,
+        bbox: [Math.min(...lons), Math.min(...lats), Math.max(...lons), Math.max(...lats)]
+      };
+    }
+
+    function unitDomain(unitType) {
+      const normalized = String(unitType || "").trim().toLowerCase();
+      if (!normalized) return null;
+      const waterKeywords = ["surface", "subsurface", "naval", "sea", "ship", "submarine", "convoy"];
+      const landKeywords = ["land", "ground", "shore", "coastal", "airbase", "sam", "site", "battery"];
+      if (waterKeywords.some((keyword) => normalized.includes(keyword))) return "water";
+      if (landKeywords.some((keyword) => normalized.includes(keyword))) return "land";
+      return null;
+    }
+
+    function normalizeLongitude(lon) {
+      return ((Number(lon) + 180) % 360 + 360) % 360 - 180;
+    }
+
+    function pointOnLand(lat, lon) {
+      if (!landPolygons.length) return false;
+      const normalizedLon = normalizeLongitude(lon);
+      for (const polygon of landPolygons) {
+        const [minLon, minLat, maxLon, maxLat] = polygon.bbox;
+        if (normalizedLon < minLon || normalizedLon > maxLon || lat < minLat || lat > maxLat) continue;
+        if (pointInPolygon(lat, normalizedLon, polygon.rings)) return true;
+      }
+      return false;
+    }
+
+    function pointInPolygon(lat, lon, rings) {
+      if (!rings.length) return false;
+      if (!pointInRing(lat, lon, rings[0])) return false;
+      for (const hole of rings.slice(1)) {
+        if (pointInRing(lat, lon, hole)) return false;
+      }
+      return true;
+    }
+
+    function pointInRing(lat, lon, ring) {
+      let inside = false;
+      let j = ring.length - 1;
+      for (let i = 0; i < ring.length; i += 1) {
+        const xi = ring[i][0];
+        const yi = ring[i][1];
+        const xj = ring[j][0];
+        const yj = ring[j][1];
+        const intersects = ((yi > lat) !== (yj > lat)) &&
+          (lon < ((xj - xi) * (lat - yi)) / ((yj - yi) || 1e-12) + xi);
+        if (intersects) inside = !inside;
+        j = i;
+      }
+      return inside;
+    }
+
+    function validateUnitPosition(unitType, lat, lon) {
+      const domain = unitDomain(unitType);
+      if (!domain || !landPolygons.length) return { ok: true };
+      const isLand = pointOnLand(lat, lon);
+      if (domain === "water" && isLand) {
+        return { ok: false, message: `${unitType} units must stay on water.` };
+      }
+      if (domain === "land" && !isLand) {
+        return { ok: false, message: `${unitType} units must stay on land.` };
+      }
+      return { ok: true };
+    }
+
+    function validateMovementSegment(unitType, start, end) {
+      const domain = unitDomain(unitType);
+      if (!domain || !landPolygons.length) return { ok: true };
+      const endpointCheck = validateUnitPosition(unitType, end.lat, end.lon);
+      if (!endpointCheck.ok) return endpointCheck;
+      for (let step = 1; step <= 16; step += 1) {
+        const fraction = step / 16;
+        const lat = start.lat + (end.lat - start.lat) * fraction;
+        const lon = start.lon + (end.lon - start.lon) * fraction;
+        const sampleCheck = validateUnitPosition(unitType, lat, lon);
+        if (!sampleCheck.ok) return sampleCheck;
+      }
+      return { ok: true };
     }
 
     const FACTION_OPTIONS = ["NATO", "United States", "United Kingdom", "Iran", "Soviet Union", "Warsaw Pact", "Civilian"];
@@ -461,6 +692,19 @@ INDEX_HTML = """<!doctype html>
         detection_radius_nm: 100.0,
         status: "Active"
       };
+    }
+
+    function totalCompositionCount(composition) {
+      return (composition || []).reduce((total, item) => total + Number(item.count || 1), 0);
+    }
+
+    function echelonLabel(composition) {
+      const total = totalCompositionCount(composition);
+      if (total <= 1) return "I";
+      if (total <= 3) return "II";
+      if (total <= 6) return "III";
+      if (total <= 9) return "X";
+      return "XX";
     }
 
     async function fetchJson(url, options) {
@@ -917,13 +1161,21 @@ INDEX_HTML = """<!doctype html>
       orderPolylines.clear();
 
       for (const fleet of view.fleets) {
+        const affiliation = affiliationForFleet(view, fleet);
+        const points = draftOrders[fleet.id] || [];
         const marker = L.marker([fleet.lat, fleet.lon], {
           draggable: Boolean(view.can_submit),
           icon: L.divIcon({
             className: "",
-            html: `<div class="fleet-token ${fleet.side.toLowerCase()} ${selectedFleetId === fleet.id ? "selected" : ""}"></div>`,
-            iconSize: [18, 18],
-            iconAnchor: [9, 9]
+            html: natoSymbolHtml(fleet.unit_type, affiliation, {
+              selected: selectedFleetId === fleet.id,
+              topModifier: echelonLabel(fleet.composition),
+              showHeading: true,
+              headingDeg: fleet.heading_deg,
+              moving: points.length > 0
+            }),
+            iconSize: [44, 44],
+            iconAnchor: [22, 22]
           })
         }).addTo(map);
         marker.bindTooltip(`${fleet.name} (${fleet.sp_id})`);
@@ -938,13 +1190,21 @@ INDEX_HTML = """<!doctype html>
         });
         marker.on("dragend", (event) => {
           const latlng = event.target.getLatLng();
+          const validation = validateMovementSegment(
+            fleet.unit_type,
+            { lat: fleet.lat, lon: fleet.lon },
+            { lat: latlng.lat, lon: latlng.lng }
+          );
+          if (!validation.ok) {
+            alert(validation.message);
+            renderView(currentView);
+            return;
+          }
           draftOrders[fleet.id] = [{ lat: latlng.lat, lon: latlng.lng }];
           renderView(currentView);
           updatePanels(currentView);
         });
         ownFleetMarkers.set(fleet.id, marker);
-
-        const points = draftOrders[fleet.id] || [];
         if (points.length) {
           const route = [[fleet.lat, fleet.lon], ...points.map((point) => [point.lat, point.lon])];
           const polyline = L.polyline(route, {
@@ -957,15 +1217,20 @@ INDEX_HTML = """<!doctype html>
       }
 
       for (const contact of view.contacts) {
+        const affiliation = contact.state === "last_known" ? "unknown" : "hostile";
         const marker = L.marker([contact.lat, contact.lon], {
           interactive: false,
           icon: L.divIcon({
             className: "",
-            html: contact.state === "visible"
-              ? `<div class="contact-token" style="background:${colorForSide(view.enemy_side)}"></div>`
-              : `<div class="contact-token last-known"></div>`,
-            iconSize: [14, 14],
-            iconAnchor: [7, 7]
+            html: natoSymbolHtml(contact.unit_type, affiliation, {
+              lastKnown: contact.state === "last_known",
+              topModifier: "I",
+              showHeading: contact.state !== "last_known",
+              headingDeg: contact.heading_deg,
+              moving: contact.state !== "last_known"
+            }),
+            iconSize: [40, 40],
+            iconAnchor: [20, 20]
           })
         }).addTo(map);
         marker.bindTooltip(`${contact.name} (${contact.state})`);
@@ -975,8 +1240,19 @@ INDEX_HTML = """<!doctype html>
 
     function onMapClick(event) {
       if (!currentView || !currentView.can_submit || !selectedFleetId) return;
+      const fleet = currentView.fleets.find((entry) => entry.id === selectedFleetId);
+      if (!fleet) return;
       const points = draftOrders[selectedFleetId] || [];
-      points.push({ lat: event.latlng.lat, lon: event.latlng.lng });
+      const startPoint = points.length
+        ? points[points.length - 1]
+        : { lat: fleet.lat, lon: fleet.lon };
+      const nextPoint = { lat: event.latlng.lat, lon: event.latlng.lng };
+      const validation = validateMovementSegment(fleet.unit_type, startPoint, nextPoint);
+      if (!validation.ok) {
+        alert(validation.message);
+        return;
+      }
+      points.push(nextPoint);
       draftOrders[selectedFleetId] = points;
       renderView(currentView);
       updatePanels(currentView);
