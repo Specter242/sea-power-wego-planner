@@ -46,18 +46,20 @@ def normalize_seed(seed: dict) -> dict:
         raise ValueError("Scenario seed requires 'scenario_name'.")
     if not isinstance(seed.get("turn_duration_minutes"), int) or seed["turn_duration_minutes"] <= 0:
         raise ValueError("'turn_duration_minutes' must be a positive integer.")
-    fleets = seed.get("fleets")
-    if not isinstance(fleets, list) or not fleets:
-        raise ValueError("Scenario seed requires a non-empty 'fleets' list.")
+    fleets = seed.get("fleets", [])
+    if fleets is None:
+        seed["fleets"] = []
+    elif not isinstance(fleets, list):
+        raise ValueError("'fleets' must be a list when provided.")
     return seed
 
 
 def create_session_state(seed: dict) -> dict:
     seed = normalize_seed(seed)
     now = utc_now()
-    fleets = [normalize_fleet(entry, idx) for idx, entry in enumerate(seed["fleets"], start=1)]
-    map_center = normalize_map_center(seed.get("map_center"), fleets)
+    fleets = [normalize_fleet(entry, idx) for idx, entry in enumerate(seed.get("fleets", []), start=1)]
     side_state = normalize_side_state(seed.get("sides", {}), fleets)
+    map_center = normalize_map_center(seed.get("map_center"), fleets, side_state)
     state = {
         "session_id": secrets.token_hex(6),
         "scenario_name": seed["scenario_name"],
@@ -117,9 +119,9 @@ def upgrade_state(state: dict) -> dict:
 
     state["fleet_counter"] = int(state.get("fleet_counter", len(fleets)))
     state["environment"] = normalize_environment(state.get("environment", {}))
-    state["map_center"] = normalize_map_center(state.get("map_center"), fleets)
     state["side_metadata"] = normalize_side_metadata(state.get("side_metadata"))
     state["side_state"] = normalize_side_state(state.get("side_state", {}), fleets)
+    state["map_center"] = normalize_map_center(state.get("map_center"), fleets, state["side_state"])
     state.setdefault("contacts", {BLUE: {}, RED: {}})
     state["contacts"].setdefault(BLUE, {})
     state["contacts"].setdefault(RED, {})
@@ -147,13 +149,27 @@ def normalize_environment(environment: dict) -> dict:
     return normalized
 
 
-def normalize_map_center(map_center: dict | None, fleets: list[dict]) -> dict:
+def normalize_map_center(map_center: dict | None, fleets: list[dict], side_state: dict | None = None) -> dict:
     if map_center and "lat" in map_center and "lon" in map_center:
         return {"lat": float(map_center["lat"]), "lon": float(map_center["lon"])}
 
-    avg_lat = sum(fleet["lat"] for fleet in fleets) / len(fleets)
-    avg_lon = sum(fleet["lon"] for fleet in fleets) / len(fleets)
-    return {"lat": round(avg_lat, 4), "lon": round(avg_lon, 4)}
+    if fleets:
+        avg_lat = sum(fleet["lat"] for fleet in fleets) / len(fleets)
+        avg_lon = sum(fleet["lon"] for fleet in fleets) / len(fleets)
+        return {"lat": round(avg_lat, 4), "lon": round(avg_lon, 4)}
+
+    if isinstance(side_state, dict):
+        spawn_points = [
+            entry.get("spawn_point")
+            for entry in side_state.values()
+            if isinstance(entry, dict) and isinstance(entry.get("spawn_point"), dict)
+        ]
+        if spawn_points:
+            avg_lat = sum(float(point["lat"]) for point in spawn_points) / len(spawn_points)
+            avg_lon = sum(float(point["lon"]) for point in spawn_points) / len(spawn_points)
+            return {"lat": round(avg_lat, 4), "lon": round(avg_lon, 4)}
+
+    return {"lat": 0.0, "lon": 0.0}
 
 
 def normalize_side_state(side_seed: dict, fleets: list[dict]) -> dict:
