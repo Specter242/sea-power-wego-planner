@@ -153,6 +153,17 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(len(built["composition"]), 2)
         self.assertEqual(state["side_state"]["Blue"]["resources"], 30)
 
+    def test_empty_fleet_seed_uses_side_spawn_points_for_center(self):
+        seed = example_seed()
+        seed.pop("map_center")
+        seed["fleets"] = []
+        state = core.create_session_state(seed)
+        self.assertEqual(state["fleets"], [])
+        self.assertEqual(state["map_center"]["lat"], 0.5)
+        self.assertEqual(state["map_center"]["lon"], 1.5)
+        self.assertEqual(state["side_state"]["Blue"]["spawn_point"]["lat"], 1.0)
+        self.assertEqual(state["side_state"]["Red"]["spawn_point"]["lon"], 2.0)
+
     def test_income_is_awarded_after_turn_resolution(self):
         state = core.create_session_state(example_seed())
         core.submit_turn(state, "Blue", 1, [])

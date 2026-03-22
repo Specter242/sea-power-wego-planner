@@ -163,18 +163,18 @@ INDEX_HTML = """<!doctype html>
     .field-grid.three {
       grid-template-columns: repeat(3, 1fr);
     }
-    .fleet-list {
+    .spawn-list {
       display: grid;
       gap: 12px;
       margin-top: 10px;
     }
-    .fleet-card {
+    .spawn-card {
       padding: 12px;
       border: 1px solid rgba(27, 43, 52, 0.12);
       border-radius: 12px;
       background: rgba(255, 255, 255, 0.72);
     }
-    .fleet-card h3 {
+    .spawn-card h3 {
       margin: 0 0 8px;
       font-size: 0.95rem;
     }
@@ -210,6 +210,30 @@ INDEX_HTML = """<!doctype html>
     .inline-actions button {
       width: auto;
     }
+    .spawn-card.active {
+      border-color: rgba(196, 139, 43, 0.7);
+      box-shadow: 0 0 0 2px rgba(196, 139, 43, 0.16);
+    }
+    .map-placement-panel {
+      margin-top: 10px;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(196, 139, 43, 0.35);
+      background: rgba(196, 139, 43, 0.1);
+    }
+    .spawn-marker {
+      width: 18px;
+      height: 18px;
+      border-radius: 999px;
+      border: 3px solid white;
+      box-shadow: 0 4px 12px rgba(27, 43, 52, 0.3);
+    }
+    .spawn-marker.blue {
+      background: var(--blue);
+    }
+    .spawn-marker.red {
+      background: var(--red);
+    }
     @media (max-width: 900px) {
       main {
         grid-template-columns: 1fr;
@@ -240,7 +264,7 @@ INDEX_HTML = """<!doctype html>
           <button class="secondary" id="refresh-scenarios">Refresh List</button>
         </div>
         <div class="button-row">
-          <button id="load-scenario">Load Selected</button>
+          <button id="edit-scenario">Edit Selected</button>
           <button class="danger" id="delete-scenario">Delete Selected</button>
         </div>
         <div class="button-row">
@@ -298,7 +322,7 @@ INDEX_HTML = """<!doctype html>
   <dialog id="scenario-dialog">
     <div class="dialog-body">
       <h2 id="scenario-dialog-title">Create Scenario</h2>
-      <p class="muted" id="scenario-dialog-text">Initialize a new scenario using structured setup fields and an editable fleet roster.</p>
+      <p class="muted" id="scenario-dialog-text">Initialize a new scenario with side settings and per-faction spawn points selected on the map.</p>
       <div class="field-grid">
         <div>
           <label for="scenario-name">Scenario Name</label>
@@ -309,28 +333,14 @@ INDEX_HTML = """<!doctype html>
           <input id="turn-duration" type="number" min="1" step="1" />
         </div>
       </div>
-      <div class="field-grid three">
-        <div>
-          <label for="map-center-lat">Map Center Lat</label>
-          <input id="map-center-lat" type="number" step="0.0001" />
-        </div>
-        <div>
-          <label for="map-center-lon">Map Center Lon</label>
-          <input id="map-center-lon" type="number" step="0.0001" />
-        </div>
-        <div>
-          <label for="sea-state">Sea State</label>
-          <input id="sea-state" type="number" min="0" step="1" />
-        </div>
-      </div>
       <div class="field-grid">
         <div>
-          <label for="scenario-date">Date</label>
-          <input id="scenario-date" placeholder="1985,6,26" />
+          <label for="scenario-date">Year</label>
+          <input id="scenario-date" type="number" min="1900" max="2100" step="1" placeholder="1985" />
         </div>
         <div>
           <label for="scenario-time">Time</label>
-          <input id="scenario-time" placeholder="10,0" />
+          <input id="scenario-time" type="time" step="60" />
         </div>
       </div>
       <div class="dialog-divider">Sides</div>
@@ -348,16 +358,24 @@ INDEX_HTML = """<!doctype html>
           <input id="red-funds" type="number" step="1" />
         </div>
       </div>
-      <div class="dialog-divider">Fleets</div>
-      <div class="inline-actions">
-        <button id="add-blue-fleet" type="button">Add Blue Fleet</button>
-        <button id="add-red-fleet" type="button">Add Red Fleet</button>
-      </div>
-      <div id="fleet-editor" class="fleet-list"></div>
+      <div class="dialog-divider">Faction Spawns</div>
+      <p class="small">Use Place On Map to open map placement, then confirm and return here.</p>
+      <div id="spawn-editor" class="spawn-list"></div>
       <div class="dialog-actions">
         <button id="dialog-load-example" type="button">Load Example</button>
         <button id="save-scenario" type="button">Create Scenario</button>
         <button class="secondary" id="close-scenario-dialog" type="button">Cancel</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="spawn-placement-dialog">
+    <div class="dialog-body">
+      <h2>Place Spawn</h2>
+      <div id="spawn-placement-text" class="small"></div>
+      <div class="dialog-actions">
+        <button id="confirm-spawn-placement" type="button">Confirm Placement</button>
+        <button id="cancel-spawn-placement" class="secondary" type="button">Cancel</button>
       </div>
     </div>
   </dialog>
@@ -373,13 +391,16 @@ INDEX_HTML = """<!doctype html>
     let selectedScenarioId = "";
     let editingScenarioId = "";
     let scenarioCache = new Map();
-    let scenarioFormFleets = [];
+    let scenarioFormSides = {};
+    let scenarioSpawnPlacement = null;
     let draftOrders = {};
     let map = null;
     let mapInitializedForSession = null;
     let ownFleetMarkers = new Map();
     let contactMarkers = new Map();
     let orderPolylines = new Map();
+    let scenarioSpawnMarkers = new Map();
+    let scenarioPlacementMarker = null;
     let pollHandle = null;
     let landPolygons = [];
     let terrainPromise = null;
@@ -400,6 +421,59 @@ INDEX_HTML = """<!doctype html>
           renderView(currentView);
         }
       });
+    }
+
+    function renderScenarioSpawnMarkers() {
+      if (!map) return;
+      for (const marker of scenarioSpawnMarkers.values()) {
+        map.removeLayer(marker);
+      }
+      scenarioSpawnMarkers.clear();
+      if (scenarioPlacementMarker) {
+        map.removeLayer(scenarioPlacementMarker);
+        scenarioPlacementMarker = null;
+      }
+      const dialogOpen = $("scenario-dialog").open;
+      const placementOpen = $("spawn-placement-dialog").open;
+      if (!dialogOpen && !placementOpen && !scenarioSpawnPlacement) return;
+
+      for (const sideName of ["Blue", "Red"]) {
+        if (scenarioSpawnPlacement?.side === sideName) continue;
+        const point = scenarioFormSides[sideName]?.spawn_point;
+        if (!point) continue;
+        const marker = L.marker([point.lat, point.lon], {
+          icon: L.divIcon({
+            className: "",
+            html: spawnMarkerHtml(sideName),
+            iconSize: [18, 18],
+            iconAnchor: [9, 9]
+          })
+        }).addTo(map);
+        marker.bindTooltip(`${sideName} spawn`);
+        scenarioSpawnMarkers.set(sideName, marker);
+      }
+
+      if (scenarioSpawnPlacement?.point) {
+        const sideName = scenarioSpawnPlacement.side;
+        scenarioPlacementMarker = L.marker([scenarioSpawnPlacement.point.lat, scenarioSpawnPlacement.point.lon], {
+          draggable: true,
+          icon: L.divIcon({
+            className: "",
+            html: spawnMarkerHtml(sideName),
+            iconSize: [18, 18],
+            iconAnchor: [9, 9]
+          })
+        }).addTo(map);
+        scenarioPlacementMarker.bindTooltip(`${sideName} spawn placement`);
+        scenarioPlacementMarker.on("dragend", (event) => {
+          const latlng = event.target.getLatLng();
+          scenarioSpawnPlacement.point = {
+            lat: Number(latlng.lat.toFixed(4)),
+            lon: Number(latlng.lng.toFixed(4))
+          };
+          renderScenarioSpawnPlacementPanel();
+        });
+      }
     }
 
     function colorForSide(value) {
@@ -651,12 +725,10 @@ INDEX_HTML = """<!doctype html>
       return {
         scenario_name: "New Scenario",
         turn_duration_minutes: 60,
-        map_center: { lat: 0.0, lon: 1.0 },
         environment: {
-          date: "1985,6,26",
+          date: "1985",
           time: "10,0",
           convert_time_to_local: false,
-          sea_state: 3,
           clouds: "Scattered_1",
           wind_direction: "E",
           load_background_data: false
@@ -665,33 +737,156 @@ INDEX_HTML = """<!doctype html>
           Blue: { faction: "NATO", starting_funds: 1000 },
           Red: { faction: "Warsaw Pact", starting_funds: 1000 }
         },
-        fleets: [
-          defaultFleet("Blue", 1),
-          defaultFleet("Red", 1)
-        ]
+        sides: {
+          Blue: { spawn_point: { lat: 0.0, lon: 0.0 } },
+          Red: { spawn_point: { lat: 0.0, lon: 2.0 } }
+        },
+        fleets: []
       };
     }
 
-    function defaultFleet(side, index) {
-      const isBlue = side === "Blue";
+    function scenarioYearValue(value) {
+      const raw = String(value || "").trim();
+      if (!raw) return "";
+      return raw.split(",")[0].trim();
+    }
+
+    function scenarioTimeDisplayValue(value) {
+      const raw = String(value || "").trim();
+      if (!raw) return "";
+      if (raw.includes(":")) return raw.slice(0, 5);
+      const parts = raw.split(",").map((part) => part.trim());
+      const hours = Number(parts[0] || 0);
+      const minutes = Number(parts[1] || 0);
+      if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return "";
+      return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+    }
+
+    function scenarioTimeSeedValue(value) {
+      const raw = String(value || "").trim();
+      if (!raw) return "10,0";
+      const parts = raw.split(":");
+      if (parts.length !== 2) throw new Error("Scenario time must use HH:MM.");
+      const hours = Number(parts[0]);
+      const minutes = Number(parts[1]);
+      if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+        throw new Error("Scenario time must use HH:MM.");
+      }
+      return `${hours},${minutes}`;
+    }
+
+    function normalizeSpawnPoint(point, fallbackPoint) {
+      const source = point && Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon))
+        ? point
+        : fallbackPoint;
       return {
-        id: `${side.toLowerCase()}_${index}`,
-        sp_id: `${side.toUpperCase()}_${index}`,
-        name: `${side} Fleet ${index}`,
-        side,
-        unit_type: "Surface",
-        sea_power_type: isBlue ? "usn_dd_spruance" : "ir_ptg_combattante_II",
-        variant_reference: "Variant1",
-        station_role: "",
-        crew_skill: "Trained",
-        telegraph: 2,
-        lat: 0.0,
-        lon: isBlue ? 0.0 : 2.0,
-        heading_deg: isBlue ? 90.0 : 270.0,
-        speed_kts: 20.0,
-        detection_radius_nm: 100.0,
-        status: "Active"
+        lat: Number(source?.lat ?? 0),
+        lon: Number(source?.lon ?? 0)
       };
+    }
+
+    function deriveScenarioSides(payload) {
+      const sideSeed = payload.sides || payload.side_state || {};
+      const fleets = Array.isArray(payload.fleets) ? payload.fleets : [];
+      const derived = {
+        Blue: { spawn_point: { lat: 0.0, lon: 0.0 } },
+        Red: { spawn_point: { lat: 0.0, lon: 2.0 } }
+      };
+      for (const sideName of ["Blue", "Red"]) {
+        const fleetMatches = fleets.filter((fleet) => fleet.side === sideName);
+        const fleetFallback = fleetMatches.length
+          ? {
+              lat: fleetMatches.reduce((sum, fleet) => sum + Number(fleet.lat || 0), 0) / fleetMatches.length,
+              lon: fleetMatches.reduce((sum, fleet) => sum + Number(fleet.lon || 0), 0) / fleetMatches.length
+            }
+          : derived[sideName].spawn_point;
+        derived[sideName] = {
+          spawn_point: normalizeSpawnPoint(sideSeed?.[sideName]?.spawn_point, fleetFallback)
+        };
+      }
+      return derived;
+    }
+
+    function scenarioMapCenter() {
+      const blue = scenarioFormSides.Blue?.spawn_point || { lat: 0, lon: 0 };
+      const red = scenarioFormSides.Red?.spawn_point || { lat: 0, lon: 0 };
+      return {
+        lat: Number(((Number(blue.lat) + Number(red.lat)) / 2).toFixed(4)),
+        lon: Number(((Number(blue.lon) + Number(red.lon)) / 2).toFixed(4))
+      };
+    }
+
+    function spawnMarkerHtml(sideName) {
+      const cssSide = sideName === "Blue" ? "blue" : "red";
+      return `<div class="spawn-marker ${cssSide}"></div>`;
+    }
+
+    function renderScenarioSpawnPlacementPanel() {
+      if (!scenarioSpawnPlacement) {
+        $("spawn-placement-text").textContent = "";
+        if ($("spawn-placement-dialog").open) $("spawn-placement-dialog").close();
+        return;
+      }
+      const point = scenarioSpawnPlacement.point;
+      $("spawn-placement-text").textContent = point
+        ? `${scenarioSpawnPlacement.side} placement active. Click the map to move the marker, drag it for fine adjustment, then confirm. Current position: ${point.lat.toFixed(4)}, ${point.lon.toFixed(4)}.`
+        : `${scenarioSpawnPlacement.side} placement active. Click the map to place a marker, then drag it if needed and confirm.`;
+      if (!$("spawn-placement-dialog").open) $("spawn-placement-dialog").show();
+    }
+
+    function beginScenarioSpawnPlacement(sideName) {
+      const currentPoint = scenarioFormSides[sideName]?.spawn_point || { lat: 0, lon: 0 };
+      scenarioSpawnPlacement = {
+        side: sideName,
+        point: { lat: Number(currentPoint.lat), lon: Number(currentPoint.lon) }
+      };
+      if ($("scenario-dialog").open) $("scenario-dialog").close();
+      const center = scenarioSpawnPlacement.point;
+      if (map) {
+        map.setView([center.lat, center.lon], Math.max(map.getZoom(), 4));
+      }
+      renderScenarioSpawnEditor();
+      renderScenarioSpawnPlacementPanel();
+    }
+
+    function confirmScenarioSpawnPlacement() {
+      if (!scenarioSpawnPlacement?.point) return;
+      scenarioFormSides[scenarioSpawnPlacement.side] = {
+        spawn_point: { ...scenarioSpawnPlacement.point }
+      };
+      scenarioSpawnPlacement = null;
+      renderScenarioSpawnEditor();
+      renderScenarioSpawnPlacementPanel();
+      if (!$("scenario-dialog").open) $("scenario-dialog").showModal();
+    }
+
+    function cancelScenarioSpawnPlacement() {
+      scenarioSpawnPlacement = null;
+      renderScenarioSpawnEditor();
+      renderScenarioSpawnPlacementPanel();
+      if (!$("scenario-dialog").open) $("scenario-dialog").showModal();
+    }
+
+    function renderScenarioSpawnEditor() {
+      const container = $("spawn-editor");
+      container.innerHTML = "";
+      for (const sideName of ["Blue", "Red"]) {
+        const point = scenarioFormSides[sideName]?.spawn_point || { lat: 0, lon: 0 };
+        const card = document.createElement("div");
+        card.className = `spawn-card ${scenarioSpawnPlacement?.side === sideName ? "active" : ""}`;
+        card.innerHTML = `
+          <h3>${sideName} Spawn</h3>
+          <div class="small">Lat ${Number(point.lat).toFixed(4)} • Lon ${Number(point.lon).toFixed(4)}</div>
+          <div class="inline-actions">
+            <button type="button" class="${scenarioSpawnPlacement?.side === sideName ? "" : "secondary"}" data-place-spawn="${sideName}">
+              ${scenarioSpawnPlacement?.side === sideName ? "Placing On Map" : "Place On Map"}
+            </button>
+          </div>
+        `;
+        container.appendChild(card);
+      }
+      renderScenarioSpawnMarkers();
+      renderScenarioSpawnPlacementPanel();
     }
 
     function totalCompositionCount(composition) {
@@ -719,15 +914,19 @@ INDEX_HTML = """<!doctype html>
         $("scenario-details").textContent = "No scenario selected.";
         return;
       }
-      const fleets = Array.isArray(scenario.seed?.fleets) ? scenario.seed.fleets : [];
       const sideMetadata = scenario.seed?.side_metadata || {};
+      const sides = deriveScenarioSides(scenario.seed || {});
       const blueMeta = sideMetadata.Blue || {};
       const redMeta = sideMetadata.Red || {};
+      const year = scenarioYearValue(scenario.seed?.environment?.date) || "Unknown year";
+      const time = scenarioTimeDisplayValue(scenario.seed?.environment?.time) || "00:00";
       $("scenario-details").innerHTML = `
         <strong>${scenario.scenario_name}</strong><br />
-        ${fleets.length} fleet(s) • ${scenario.seed.turn_duration_minutes} minute turn<br />
+        ${year} • ${time} • ${scenario.seed.turn_duration_minutes} minute turn<br />
         Blue: ${blueMeta.faction || "Unknown"} • funds ${blueMeta.starting_funds ?? 0}<br />
+        Blue spawn: ${Number(sides.Blue.spawn_point.lat).toFixed(2)}, ${Number(sides.Blue.spawn_point.lon).toFixed(2)}<br />
         Red: ${redMeta.faction || "Unknown"} • funds ${redMeta.starting_funds ?? 0}<br />
+        Red spawn: ${Number(sides.Red.spawn_point.lat).toFixed(2)}, ${Number(sides.Red.spawn_point.lon).toFixed(2)}<br />
         Updated ${new Date(scenario.updated_at).toLocaleString()}
       `;
     }
@@ -747,119 +946,33 @@ INDEX_HTML = """<!doctype html>
       const payload = seed || defaultScenarioSeed();
       $("scenario-name").value = payload.scenario_name || "";
       $("turn-duration").value = payload.turn_duration_minutes ?? 60;
-      $("map-center-lat").value = payload.map_center?.lat ?? "";
-      $("map-center-lon").value = payload.map_center?.lon ?? "";
-      $("sea-state").value = payload.environment?.sea_state ?? 3;
-      $("scenario-date").value = payload.environment?.date || "1985,6,26";
-      $("scenario-time").value = payload.environment?.time || "10,0";
+      $("scenario-date").value = scenarioYearValue(payload.environment?.date) || "1985";
+      $("scenario-time").value = scenarioTimeDisplayValue(payload.environment?.time) || "10:00";
       $("blue-faction").value = payload.side_metadata?.Blue?.faction || "NATO";
       $("blue-funds").value = payload.side_metadata?.Blue?.starting_funds ?? 1000;
       $("red-faction").value = payload.side_metadata?.Red?.faction || "Warsaw Pact";
       $("red-funds").value = payload.side_metadata?.Red?.starting_funds ?? 1000;
-      scenarioFormFleets = (payload.fleets || []).map((fleet) => ({ ...fleet }));
-      renderFleetEditor();
-    }
-
-    function renderFleetEditor() {
-      const container = $("fleet-editor");
-      container.innerHTML = "";
-      scenarioFormFleets.forEach((fleet, index) => {
-        const card = document.createElement("div");
-        card.className = "fleet-card";
-        card.innerHTML = `
-          <h3>${fleet.side} Fleet ${index + 1}</h3>
-          <div class="field-grid">
-            <div>
-              <label>Fleet Name</label>
-              <input data-field="name" data-index="${index}" value="${fleet.name || ""}" />
-            </div>
-            <div>
-              <label>SP ID</label>
-              <input data-field="sp_id" data-index="${index}" value="${fleet.sp_id || ""}" />
-            </div>
-          </div>
-          <div class="field-grid three">
-            <div>
-              <label>Lat</label>
-              <input data-field="lat" data-index="${index}" type="number" step="0.0001" value="${fleet.lat ?? 0}" />
-            </div>
-            <div>
-              <label>Lon</label>
-              <input data-field="lon" data-index="${index}" type="number" step="0.0001" value="${fleet.lon ?? 0}" />
-            </div>
-            <div>
-              <label>Heading</label>
-              <input data-field="heading_deg" data-index="${index}" type="number" step="0.1" value="${fleet.heading_deg ?? 0}" />
-            </div>
-          </div>
-          <div class="field-grid three">
-            <div>
-              <label>Speed Kts</label>
-              <input data-field="speed_kts" data-index="${index}" type="number" step="0.1" value="${fleet.speed_kts ?? 20}" />
-            </div>
-            <div>
-              <label>Detection Radius</label>
-              <input data-field="detection_radius_nm" data-index="${index}" type="number" step="0.1" value="${fleet.detection_radius_nm ?? 100}" />
-            </div>
-            <div>
-              <label>Sea Power Type</label>
-              <input data-field="sea_power_type" data-index="${index}" value="${fleet.sea_power_type || ""}" />
-            </div>
-          </div>
-          <div class="field-grid three">
-            <div>
-              <label>Variant</label>
-              <input data-field="variant_reference" data-index="${index}" value="${fleet.variant_reference || "Variant1"}" />
-            </div>
-            <div>
-              <label>Role</label>
-              <input data-field="station_role" data-index="${index}" value="${fleet.station_role || ""}" />
-            </div>
-            <div>
-              <label>Skill</label>
-              <input data-field="crew_skill" data-index="${index}" value="${fleet.crew_skill || "Trained"}" />
-            </div>
-          </div>
-          <div class="inline-actions">
-            <button type="button" class="danger" data-remove-fleet="${index}">Remove Fleet</button>
-          </div>
-        `;
-        container.appendChild(card);
-      });
-      if (!scenarioFormFleets.length) {
-        container.innerHTML = '<div class="small">No fleets configured yet.</div>';
+      scenarioFormSides = deriveScenarioSides(payload);
+      scenarioSpawnPlacement = null;
+      renderScenarioSpawnEditor();
+      const center = payload.map_center || scenarioMapCenter();
+      if (map) {
+        map.setView([center.lat, center.lon], Math.max(map.getZoom(), 3));
       }
-    }
-
-    function updateFleetField(index, field, value) {
-      const fleet = scenarioFormFleets[index];
-      if (!fleet) return;
-      const numericFields = new Set(["lat", "lon", "heading_deg", "speed_kts", "detection_radius_nm"]);
-      fleet[field] = numericFields.has(field) ? Number(value) : value;
-    }
-
-    function addFleet(side) {
-      const nextIndex = scenarioFormFleets.filter((fleet) => fleet.side === side).length + 1;
-      scenarioFormFleets.push(defaultFleet(side, nextIndex));
-      renderFleetEditor();
     }
 
     function collectScenarioFormData() {
-      if (!scenarioFormFleets.length) {
-        throw new Error("At least one fleet is required.");
-      }
+      const year = $("scenario-date").value.trim();
+      if (!year) throw new Error("Scenario year is required.");
+      if (scenarioSpawnPlacement) throw new Error("Confirm or cancel spawn placement before saving.");
       return {
         scenario_name: $("scenario-name").value.trim(),
         turn_duration_minutes: Number($("turn-duration").value),
-        map_center: {
-          lat: Number($("map-center-lat").value),
-          lon: Number($("map-center-lon").value),
-        },
+        map_center: scenarioMapCenter(),
         environment: {
-          date: $("scenario-date").value.trim(),
-          time: $("scenario-time").value.trim(),
+          date: year,
+          time: scenarioTimeSeedValue($("scenario-time").value),
           convert_time_to_local: false,
-          sea_state: Number($("sea-state").value),
           clouds: "Scattered_1",
           wind_direction: "E",
           load_background_data: false,
@@ -874,30 +987,17 @@ INDEX_HTML = """<!doctype html>
             starting_funds: Number($("red-funds").value),
           }
         },
-        fleets: scenarioFormFleets.map((fleet, index) => ({
-          id: fleet.id || `${fleet.side.toLowerCase()}_${index + 1}`,
-          sp_id: fleet.sp_id || `${fleet.side.toUpperCase()}_${index + 1}`,
-          name: fleet.name || `${fleet.side} Fleet ${index + 1}`,
-          side: fleet.side,
-          unit_type: fleet.unit_type || "Surface",
-          sea_power_type: fleet.sea_power_type || "usn_dd_spruance",
-          variant_reference: fleet.variant_reference || "Variant1",
-          station_role: fleet.station_role || "",
-          crew_skill: fleet.crew_skill || "Trained",
-          telegraph: 2,
-          lat: Number(fleet.lat),
-          lon: Number(fleet.lon),
-          heading_deg: Number(fleet.heading_deg),
-          speed_kts: Number(fleet.speed_kts),
-          detection_radius_nm: Number(fleet.detection_radius_nm),
-          status: fleet.status || "Active",
-        }))
+        sides: {
+          Blue: { spawn_point: { ...scenarioFormSides.Blue.spawn_point } },
+          Red: { spawn_point: { ...scenarioFormSides.Red.spawn_point } }
+        },
+        fleets: []
       };
     }
 
     function syncScenarioButtons() {
       const hasSelection = Boolean(selectedScenarioId);
-      $("load-scenario").disabled = !hasSelection;
+      $("edit-scenario").disabled = !hasSelection;
       $("delete-scenario").disabled = !hasSelection;
       $("create-session").disabled = !hasSelection;
     }
@@ -958,18 +1058,23 @@ INDEX_HTML = """<!doctype html>
 
     function openScenarioDialog(seed, scenarioId) {
       editingScenarioId = scenarioId || "";
+      scenarioSpawnPlacement = null;
       $("scenario-dialog-title").textContent = editingScenarioId ? "Edit Scenario" : "Create Scenario";
       $("scenario-dialog-text").textContent = editingScenarioId
         ? "Update the selected scenario seed and save the changes back to the library."
-        : "Initialize a new scenario using structured setup fields and an editable fleet roster.";
+        : "Initialize a new scenario with side settings and per-faction spawn points selected on the map.";
       $("save-scenario").textContent = editingScenarioId ? "Update Scenario" : "Create Scenario";
       populateScenarioForm(seed || defaultScenarioSeed());
       $("scenario-dialog").showModal();
+      renderScenarioSpawnMarkers();
     }
 
     function closeScenarioDialog() {
       editingScenarioId = "";
+      scenarioSpawnPlacement = null;
       $("scenario-dialog").close();
+      renderScenarioSpawnMarkers();
+      renderScenarioSpawnPlacementPanel();
     }
 
     async function createSessionForScenario(scenarioId) {
@@ -1239,6 +1344,15 @@ INDEX_HTML = """<!doctype html>
     }
 
     function onMapClick(event) {
+      if ($("scenario-dialog").open && scenarioSpawnPlacement) {
+        scenarioSpawnPlacement.point = {
+          lat: Number(event.latlng.lat.toFixed(4)),
+          lon: Number(event.latlng.lng.toFixed(4))
+        };
+        renderScenarioSpawnMarkers();
+        renderScenarioSpawnPlacementPanel();
+        return;
+      }
       if (!currentView || !currentView.can_submit || !selectedFleetId) return;
       const fleet = currentView.fleets.find((entry) => entry.id === selectedFleetId);
       if (!fleet) return;
@@ -1256,6 +1370,19 @@ INDEX_HTML = """<!doctype html>
       draftOrders[selectedFleetId] = points;
       renderView(currentView);
       updatePanels(currentView);
+    }
+
+    function editSelectedScenario() {
+      if (!selectedScenarioId) {
+        alert("Select a saved scenario first.");
+        return;
+      }
+      const scenario = scenarioCache.get(selectedScenarioId);
+      if (!scenario) {
+        alert("Load the selected scenario first.");
+        return;
+      }
+      openScenarioDialog(scenario.seed, scenario.scenario_id);
     }
 
     function clearSelectedOrder() {
@@ -1287,7 +1414,7 @@ INDEX_HTML = """<!doctype html>
 
     $("new-scenario").addEventListener("click", () => openScenarioDialog());
     $("refresh-scenarios").addEventListener("click", () => refreshScenarioList(selectedScenarioId).catch((error) => alert(error.message)));
-    $("load-scenario").addEventListener("click", () => startSelectedScenario().catch((error) => alert(error.message)));
+    $("edit-scenario").addEventListener("click", editSelectedScenario);
     $("delete-scenario").addEventListener("click", () => deleteSelectedScenario().catch((error) => alert(error.message)));
     $("create-session").addEventListener("click", createSession);
     $("load-example-scenario").addEventListener("click", () => importExampleScenario().catch((error) => alert(error.message)));
@@ -1301,25 +1428,20 @@ INDEX_HTML = """<!doctype html>
     });
     $("save-scenario").addEventListener("click", () => saveScenario().catch((error) => alert(error.message)));
     $("close-scenario-dialog").addEventListener("click", closeScenarioDialog);
-    $("add-blue-fleet").addEventListener("click", () => addFleet("Blue"));
-    $("add-red-fleet").addEventListener("click", () => addFleet("Red"));
-    $("fleet-editor").addEventListener("input", (event) => {
-      const target = event.target;
-      if (!target.dataset.index || !target.dataset.field) return;
-      updateFleetField(Number(target.dataset.index), target.dataset.field, target.value);
-    });
-    $("fleet-editor").addEventListener("click", (event) => {
-      const trigger = event.target.closest("[data-remove-fleet]");
+    $("spawn-editor").addEventListener("click", (event) => {
+      const trigger = event.target.closest("[data-place-spawn]");
       if (!trigger) return;
-      scenarioFormFleets.splice(Number(trigger.dataset.removeFleet), 1);
-      renderFleetEditor();
+      beginScenarioSpawnPlacement(trigger.dataset.placeSpawn);
     });
+    $("confirm-spawn-placement").addEventListener("click", confirmScenarioSpawnPlacement);
+    $("cancel-spawn-placement").addEventListener("click", cancelScenarioSpawnPlacement);
     $("scenario-select").addEventListener("change", () => {
       loadScenario($("scenario-select").value).catch((error) => alert(error.message));
     });
 
     populateFactionSelect("blue-faction");
     populateFactionSelect("red-faction");
+    initializeMap();
     syncScenarioButtons();
     updateScreenMode(false);
     refreshScenarioList().catch((error) => {
