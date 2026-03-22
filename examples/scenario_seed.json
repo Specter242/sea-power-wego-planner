@@ -1,0 +1,91 @@
+{
+  "scenario_name": "Gulf Of Oman Duel",
+  "turn_duration_minutes": 60,
+  "map_center": {
+    "lat": 25.78,
+    "lon": 56.81
+  },
+  "environment": {
+    "date": "1985,6,26",
+    "time": "10,0",
+    "convert_time_to_local": false,
+    "sea_state": 3,
+    "clouds": "Scattered_1",
+    "wind_direction": "E",
+    "load_background_data": false
+  },
+  "fleets": [
+    {
+      "id": "blue_tf_1",
+      "sp_id": "BLUE_TF_1",
+      "name": "Task Force 77",
+      "side": "Blue",
+      "unit_type": "Surface",
+      "sea_power_type": "usn_dd_spruance",
+      "variant_reference": "Variant6",
+      "station_role": "ASW",
+      "crew_skill": "Trained",
+      "telegraph": 2,
+      "lat": 25.34,
+      "lon": 54.40,
+      "heading_deg": 0,
+      "speed_kts": 18,
+      "detection_radius_nm": 120,
+      "status": "Active"
+    },
+    {
+      "id": "blue_tf_2",
+      "sp_id": "BLUE_TF_2",
+      "name": "NATO SAG North",
+      "side": "Blue",
+      "unit_type": "Surface",
+      "sea_power_type": "usn_ddg_adams_late",
+      "variant_reference": "Variant3",
+      "station_role": "AAW",
+      "crew_skill": "Trained",
+      "telegraph": 2,
+      "lat": 26.20,
+      "lon": 55.25,
+      "heading_deg": 40,
+      "speed_kts": 22,
+      "detection_radius_nm": 110,
+      "status": "Active"
+    },
+    {
+      "id": "red_tf_1",
+      "sp_id": "RED_TF_1",
+      "name": "Iranian Fast Attack Group",
+      "side": "Red",
+      "unit_type": "Surface",
+      "sea_power_type": "ir_ptg_combattante_II",
+      "variant_reference": "Variant1",
+      "station_role": "Core",
+      "crew_skill": "Trained",
+      "telegraph": 2,
+      "lat": 25.92,
+      "lon": 58.30,
+      "heading_deg": 240,
+      "speed_kts": 28,
+      "detection_radius_nm": 90,
+      "status": "Active"
+    },
+    {
+      "id": "red_tf_2",
+      "sp_id": "RED_TF_2",
+      "name": "Kaivan Patrol Group",
+      "side": "Red",
+      "unit_type": "Surface",
+      "sea_power_type": "ir_pt_kaivan",
+      "variant_reference": "Variant4",
+      "station_role": "",
+      "crew_skill": "Trained",
+      "telegraph": 2,
+      "lat": 24.95,
+      "lon": 57.95,
+      "heading_deg": 210,
+      "speed_kts": 24,
+      "detection_radius_nm": 75,
+      "status": "Active"
+    }
+  ]
+}
