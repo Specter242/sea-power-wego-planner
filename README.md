@@ -1,16 +1,18 @@
-# Sea Power Hosted WEGO Planner
+# Sea Power Local Campaign Planner
 
-This repository now contains a hosted browser-based planner for turn-based PvP Sea Power scenarios.
+This repository contains a browser-based local campaign planner for turn-based Sea Power scenarios.
 
 ## What It Does
 
-- creates a two-player WEGO session from a JSON scenario seed
-- generates separate secret links for the Blue and Red players
-- generates a full-truth admin link for referee oversight and corrections
-- tracks per-side resources, build catalogs, and spawn points
+- loads one local campaign from `data/current_campaign.json`
+- falls back to the most recent legacy SQLite session if no JSON campaign exists yet
+- creates a blank campaign shell automatically if no save exists
+- starts with a simple `Red`, `Blue`, or `ADMIN` team selection flow
+- tracks per-side resources, ports, reserve ships, fleets, repairs, and rearm jobs
+- surfaces points and income clearly in Overview and Economy management views
+- lets each side create ships, assemble fleets, transfer ships, dock/undock, and manage logistics
 - lets each player submit fleet movement orders with waypoint chains
-- lets each side spend resources to build new fleets during the open turn
-- resolves movement simultaneously on the server
+- lets admin resolve turns explicitly after both sides are ready
 - computes rule-based fog of war with visible and last-known contacts
 - keeps seaborne units on water and land-based units on land using a coarse world land mask
 - exports the full resolved state as a Sea Power scenario `.ini`
@@ -26,6 +28,16 @@ Then open:
 ```text
 http://<host>:8000/
 ```
+
+Optional launcher flags:
+
+```sh
+python3 run_planner.py --campaign data/current_campaign.json --legacy-db data/planner.sqlite3
+```
+
+## Save And Import Data
+
+The planner now uses a single local JSON campaign file as its source of truth. Admin can also import a Sea Power save file from the web UI.
 
 ## Seed Data
 
@@ -64,35 +76,41 @@ Each fleet should include:
 - `composition[]`
 - Sea Power export fields such as `sea_power_type`, `variant_reference`, `station_role`, `crew_skill`, and `telegraph`
 
-Each build catalog entry can define:
-
-- `id`
-- `name`
-- `cost`
-- `unit_type`
-- `speed_kts`
-- `detection_radius_nm`
-- `composition[]`
-
 ## API
 
-- `POST /sessions`
-- `GET /sessions/{id}/view?token=...`
-- `GET /sessions/{id}/admin/view?admin_token=...`
-- `POST /sessions/{id}/turns/{side}?token=...`
-- `POST /sessions/{id}/builds/{side}?token=...`
-- `POST /sessions/{id}/admin/fleets/{fleet_id}?admin_token=...`
-- `POST /sessions/{id}/resolve?admin_token=...`
-- `GET /sessions/{id}/export/scenario.ini?admin_token=...`
+- `GET /api/campaign/view?role=Blue|Red|Admin`
+- `POST /api/campaign/import-save?role=Admin`
+- `POST /api/campaign/reset?role=Admin`
+- `POST /api/campaign/resolve?role=Admin`
+- `GET /api/campaign/export/scenario.ini?role=Admin`
+- `POST /api/ports?role=...`
+- `POST /api/ports/{id}?role=...`
+- `POST /api/sides/{side}?role=Admin`
+- `POST /api/fleets?role=...`
+- `POST /api/fleets/{id}?role=...`
+- `POST /api/fleets/{id}/dock?role=...`
+- `POST /api/fleets/{id}/merge?role=...`
+- `POST /api/ships?role=...`
+- `POST /api/ships/{id}?role=...`
+- `POST /api/ships/{id}/transfer?role=...`
+- `POST /api/ships/{id}/rearm?role=...`
+- `POST /api/ships/{id}/repair?role=...`
+- `POST /api/turns/{side}?role=Blue|Red|Admin`
 
 ## Notes
 
 - The server is authoritative for the full truth state.
 - Player views are redacted by side.
-- Admin views can see every fleet and directly edit fleet state if a referee correction is needed.
-- New builds spawn at the configured side spawn point.
+- Admin views can see every fleet and directly edit both sides.
+- Blue and Red can fully manage their own side assets without authentication; role selection is just a local UX mode.
 - Surface/subsurface/naval unit types are kept on water; land/ground/coastal types are kept on land.
 - v1 only resolves movement and visibility. It does not model combat, doctrine, EMCON, AI, weather effects, or terrain masking.
+
+## Testing
+
+```sh
+python -m unittest discover -s tests -v
+```
 
 ## Workflow
 

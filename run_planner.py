@@ -8,17 +8,22 @@ from planner.server import create_server
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run the Sea Power WEGO PvP planner.")
+    parser = argparse.ArgumentParser(description="Run the Sea Power local campaign planner.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument(
-        "--db",
+        "--campaign",
+        default=str(Path(__file__).resolve().parent / "data" / "current_campaign.json"),
+        help="Local JSON campaign path.",
+    )
+    parser.add_argument(
+        "--legacy-db",
         default=str(Path(__file__).resolve().parent / "data" / "planner.sqlite3"),
-        help="SQLite database path.",
+        help="Optional legacy SQLite database path used for one-time migration.",
     )
     args = parser.parse_args()
 
-    server = create_server(args.host, args.port, args.db)
+    server = create_server(args.host, args.port, args.campaign, legacy_db_path=args.legacy_db)
     print(f"Sea Power planner running at http://{args.host}:{args.port}")
     try:
         server.serve_forever()

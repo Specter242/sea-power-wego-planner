@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import math
 from functools import lru_cache
 from pathlib import Path
 
 
 LAND = "land"
 WATER = "water"
+NM_PER_DEGREE_LAT = 60.0
 
 
 @lru_cache(maxsize=1)
@@ -74,6 +76,57 @@ def validate_unit_position(unit_type: str, lat: float, lon: float) -> None:
         raise ValueError(f"{unit_type} units must stay on land.")
 
 
+def point_is_coastal_land(lat: float, lon: float, *, water_search_nm: float = 3.0) -> bool:
+    if not point_on_land(lat, lon):
+        return False
+    return nearest_water_distance_nm(lat, lon, max_distance_nm=water_search_nm) is not None
+
+
+def nearest_water_distance_nm(lat: float, lon: float, *, max_distance_nm: float = 10.0, step_nm: float = 0.5) -> float | None:
+    if not point_on_land(lat, lon):
+        return 0.0
+    radius = max(step_nm, 0.5)
+    while radius <= max_distance_nm + 1e-9:
+        for bearing in range(0, 360, 15):
+            sample_lat, sample_lon = offset_point(lat, lon, radius, bearing)
+            if not point_on_land(sample_lat, sample_lon):
+                return round(radius, 3)
+        radius += step_nm
+    return None
+
+
+def snap_port_to_coast(
+    lat: float,
+    lon: float,
+    *,
+    max_search_nm: float = 24.0,
+    step_nm: float = 1.0,
+    coastal_water_nm: float = 3.0,
+) -> dict:
+    if point_is_coastal_land(lat, lon, water_search_nm=coastal_water_nm):
+        return {"lat": round(lat, 6), "lon": round(normalize_lon(lon), 6), "distance_nm": 0.0}
+
+    best: dict | None = None
+    radius = max(step_nm, 0.5)
+    bearings = list(range(0, 360, 12))
+    while radius <= max_search_nm + 1e-9:
+        for bearing in bearings:
+            sample_lat, sample_lon = offset_point(lat, lon, radius, bearing)
+            if not point_is_coastal_land(sample_lat, sample_lon, water_search_nm=coastal_water_nm):
+                continue
+            candidate = {
+                "lat": round(sample_lat, 6),
+                "lon": round(normalize_lon(sample_lon), 6),
+                "distance_nm": round(radius, 3),
+            }
+            if best is None or candidate["distance_nm"] < best["distance_nm"]:
+                best = candidate
+        if best is not None:
+            return best
+        radius += step_nm
+    raise ValueError("No coastal placement found near the selected point.")
+
+
 def validate_movement_segment(
     unit_type: str,
     start_lat: float,
@@ -122,3 +175,11 @@ def point_in_ring(lat: float, lon: float, ring: list[list[float]]) -> bool:
 
 def normalize_lon(lon: float) -> float:
     return ((float(lon) + 180.0) % 360.0) - 180.0
+
+
+def offset_point(lat: float, lon: float, distance_nm: float, bearing_deg: float) -> tuple[float, float]:
+    radians = math.radians(bearing_deg)
+    delta_lat = (distance_nm / NM_PER_DEGREE_LAT) * math.cos(radians)
+    lat_scale = max(0.01, math.cos(math.radians(lat)))
+    delta_lon = (distance_nm / (NM_PER_DEGREE_LAT * lat_scale)) * math.sin(radians)
+    return lat + delta_lat, normalize_lon(lon + delta_lon)
